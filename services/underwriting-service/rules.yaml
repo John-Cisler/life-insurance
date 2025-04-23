@@ -1,0 +1,4 @@
+min_age: 18
+max_age: 65
+base_premium: 300
+smoker_surcharge_pct: 0.25
