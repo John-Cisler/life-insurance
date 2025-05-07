@@ -26,12 +26,59 @@ def calculate_premium(cust, coverage):
 
 @app.post("/underwrite")
 def underwrite():
+    # validate input 
     try:
         data = UWRequest.model_validate(request.json)
     except ValidationError as e:
         return jsonify(e.errors()), 400
+
     cust = fetch_customer(data.customerId)
     premium, decision = calculate_premium(cust, data.coverage)
-    return jsonify({"customerId": data.customerId,
-                    "decision": decision,
-                    "annualPremium": premium})
+
+    # prepare holder so it's in scope no matter what
+    policy_data = None
+    status_code  = 200          # default
+
+    # Strict‑consistency branch
+    if decision == "APPROVED":
+        policy_resp = requests.post(
+            "http://policy-service:8083/policies",
+            json={
+                "customerId": data.customerId,
+                "coverage":   data.coverage,
+                "annualPremium": premium
+            },
+            timeout=5
+        )
+
+        print("UW → Policy status=", policy_resp.status_code,
+        "body=", policy_resp.text, flush=True)
+
+        if policy_resp.status_code == 409:         # already has a policy
+            return jsonify({
+                "decision": "DECLINED",
+                "reason":   "policy_exists"
+            }), 409
+
+        if policy_resp.status_code != 201:         # any other failure
+            return jsonify({"detail": "Policy creation failed"}), 500
+
+        # success -> grab JSON so caller can see it
+        policy_data = policy_resp.json()
+        status_code = 201                          # created
+
+    # Build unified response 
+    response_body = {
+        "customerId":   data.customerId,
+        "decision":     decision,
+        "annualPremium": premium,
+    }
+
+
+    if policy_data:
+        response_body.update({
+            "policyId":   policy_data["id"],
+            "policyLink": f"/policies/{policy_data['id']}"
+        })
+
+    return jsonify(response_body), status_code
