@@ -9,3 +9,4 @@ class Customer(db.Model):
     dob          = db.Column(db.Date)
     smoker       = db.Column(db.Boolean)
     created_at   = db.Column(db.DateTime, server_default=db.func.now())
+    is_active   = db.Column(db.Boolean, default=True)

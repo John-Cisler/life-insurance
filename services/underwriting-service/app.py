@@ -24,9 +24,9 @@ def calculate_premium(cust, coverage):
         premium *= 1 + rules["smoker_surcharge_pct"]
     return round(premium, 2), "APPROVED"
 
-@app.post("/underwrite")
-def underwrite():
-    # validate input 
+
+@app.post("/quote")
+def quote_only():
     try:
         data = UWRequest.model_validate(request.json)
     except ValidationError as e:
@@ -35,50 +35,71 @@ def underwrite():
     cust = fetch_customer(data.customerId)
     premium, decision = calculate_premium(cust, data.coverage)
 
-    # prepare holder so it's in scope no matter what
-    policy_data = None
-    status_code  = 200          # default
+    return jsonify({
+        "customerId":   data.customerId,
+        "decision":     decision,
+        "annualPremium": premium
+    }), 200
 
-    # Strict‑consistency branch
+
+
+@app.post("/underwrite")
+def underwrite():
+    try:
+        data = UWRequest.model_validate(request.json)
+    except ValidationError as e:
+        return jsonify(e.errors()), 400
+
+    policy_type = request.args.get("policy_type", "TERM").upper()
+
+    cust = fetch_customer(data.customerId)
+    premium, decision = calculate_premium(cust, data.coverage)
+
+    # duplicate policy guard
     if decision == "APPROVED":
-        policy_resp = requests.post(
-            "http://policy-service:8083/policies",
-            json={
-                "customerId": data.customerId,
-                "coverage":   data.coverage,
-                "annualPremium": premium
-            },
-            timeout=5
+        chk_url = (
+            "http://policy-service:8083/policies"
+            f"?customerId={data.customerId}&policyType={policy_type}&status=ACTIVE"
         )
-
-        print("UW → Policy status=", policy_resp.status_code,
-        "body=", policy_resp.text, flush=True)
-
-        if policy_resp.status_code == 409:         # already has a policy
+        dup_resp = requests.get(chk_url, timeout=5)
+        dup_resp.raise_for_status()
+        if dup_resp.json():          # non-empty list
             return jsonify({
                 "decision": "DECLINED",
                 "reason":   "policy_exists"
             }), 409
 
-        if policy_resp.status_code != 201:         # any other failure
+    # strict-consistency policy creation 
+    policy_data = None
+    status_code = 200
+    if decision == "APPROVED":
+        policy_resp = requests.post(
+            "http://policy-service:8083/policies",
+            json={
+                "customerId":   data.customerId,
+                "coverage":     data.coverage,
+                "annualPremium": premium,
+                "policyType":   policy_type
+            },
+            timeout=5
+        )
+
+        if policy_resp.status_code != 201:
             return jsonify({"detail": "Policy creation failed"}), 500
 
-        # success -> grab JSON so caller can see it
         policy_data = policy_resp.json()
-        status_code = 201                          # created
+        status_code = 201
 
-    # Build unified response 
-    response_body = {
+    # build response
+    body = {
         "customerId":   data.customerId,
         "decision":     decision,
         "annualPremium": premium,
+        "policyType":   policy_type
     }
-
-
     if policy_data:
-        response_body.update({
-            "policyId":   policy_data["id"],
+        body.update({
+            "policyId": policy_data["id"],
             "policyLink": f"/policies/{policy_data['id']}"
         })
-
-    return jsonify(response_body), status_code
+    return jsonify(body), status_code

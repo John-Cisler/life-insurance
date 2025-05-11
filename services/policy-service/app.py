@@ -21,3 +21,6 @@ def create_app():
     return app
 
 app = create_app()
+
+@app.errorhandler(404)
+def not_found(e): return jsonify(detail=str(e)), 404
