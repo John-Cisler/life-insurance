@@ -31,8 +31,6 @@ def create_policy():
         # other DB errors
         return jsonify({"detail": "DB error"}), 500 
 
-
-    #return (PolicyOut.model_validate(p).model_dump(by_alias=True, mode="json"), 201, )
     return _policy_to_json(p), 201
 
 
@@ -52,21 +50,14 @@ def search_policies():
 # get all policies for a customer
 @bp.get("/customers/<int:cid>/policies")
 def list_policies_for_customer(cid: int):
-    status      = request.args.get("status")        # optional
-    policy_type = request.args.get("policy_type")   # optional
+    status      = request.args.get("status")       
+    policy_type = request.args.get("policy_type")   
 
     q = Policy.query.filter_by(customer_id=cid)
     if status:
         q = q.filter_by(status=status.upper())
     if policy_type:
         q = q.filter_by(policy_type=PolicyType(policy_type.upper()))
-
-    # Return full JSON objects
-    # payload = [
-    #     PolicyOut.model_validate(p).model_dump(by_alias=True, mode="json")
-    #     for p in q.order_by(Policy.policy_type, Policy.id)
-    # ]
-    # return jsonify(payload), 200
 
     payload = [_policy_to_json(p) for p in q.order_by(Policy.policy_type, Policy.id)]
     return jsonify(payload), 200
@@ -79,7 +70,6 @@ def list_policies_for_customer(cid: int):
 @bp.get("/policies/<int:pid>")
 def get_policy(pid: int):
     p = Policy.query.get_or_404(pid)
-    #return (PolicyOut.model_validate(p).model_dump(by_alias=True, mode="json"), 200, )
     return _policy_to_json(p), 200
 
 
@@ -94,7 +84,6 @@ def patch_policy(pid):
         p.status = data["status"]
     db.session.commit()
     
-    #return PolicyOut.model_validate(p).model_dump(by_alias=True, mode="json"), 200
     return _policy_to_json(p), 200
 
 
@@ -105,6 +94,7 @@ def lapse_policy(pid):
     p.status = "LAPSED"
     db.session.commit()
     return "", 204
+
 
 # add beneficiaries
 @bp.post("/policies/<int:pid>/beneficiaries")
@@ -124,7 +114,23 @@ def set_beneficiaries(pid):
     db.session.commit()
     return {"policyId": pid, "beneficiaries": [b.model_dump() for b in benes]}, 200
 
+# view beneficiaries 
+@bp.get("/policies/<int:pid>/beneficiaries")
+def get_beneficiaries(pid):
+    policy = Policy.query.get_or_404(pid)
+    payload = [
+        {"name": b.name, "pctShare": float(b.pct_share)}
+        for b in policy.beneficiaries
+    ]
+    return jsonify(payload), 200
 
+# delete / clear all beneficiaries
+@bp.delete("/policies/<int:pid>/beneficiaries")
+def clear_beneficiaries(pid):
+    policy = Policy.query.get_or_404(pid)
+    Beneficiary.query.filter_by(policy_id=pid).delete()
+    db.session.commit()
+    return "", 204
 
 # helper functions
 def _policy_to_json(p: Policy) -> dict:
