@@ -63,9 +63,6 @@ def list_policies_for_customer(cid: int):
     return jsonify(payload), 200
 
 
-
-
-
 # read for specific policy
 @bp.get("/policies/<int:pid>")
 def get_policy(pid: int):
